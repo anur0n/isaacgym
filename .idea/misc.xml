@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.7 (rlgpu)" project-jdk-type="Python SDK" />
+  <component name="SwUserDefinedSpecifications">
+    <option name="specTypeByUrl">
+      <map />
+    </option>
+  </component>
+  <component name="UnattendedHostPersistenceState">
+    <option name="openedFilesInfos">
+      <list>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="0" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/isaacgym/legged_gym/legged_gym/scripts/train.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="1031" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/isaacgym/legged_gym/legged_gym/scripts/play.py" />
+        </OpenedFileInfo>
+      </list>
+    </option>
+  </component>
+</project>

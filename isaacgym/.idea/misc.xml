@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.8 (rlgpu)" project-jdk-type="Python SDK" />
+  <component name="UnattendedHostPersistenceState">
+    <option name="openedFilesInfos">
+      <list>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="1951" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/legged_gym/legged_gym/envs/base/visual_legged_robot_config.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="2396" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/rsl_rl/rsl_rl/modules/actor_critic.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="2690" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/legged_gym/legged_gym/envs/base/base_task.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="1912" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/legged_gym/legged_gym/envs/visual_anymal_c/mixed_terrains/visual_anymal_c_rough_config.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="1963" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/rsl_rl/rsl_rl/modules/skinner_actor_critic.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="7082" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/rsl_rl/rsl_rl/modules/visual_robot_actor_critic.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="8717" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/legged_gym/legged_gym/envs/base/skinner_legged_robot_config.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="11774" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/legged_gym/legged_gym/envs/base/visual_legged_robot.py" />
+        </OpenedFileInfo>
+      </list>
+    </option>
+  </component>
+</project>

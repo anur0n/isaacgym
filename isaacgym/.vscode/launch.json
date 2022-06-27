@@ -1,0 +1,75 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: legged gym train",
+            "type": "python",
+            "request": "launch",
+            "program": "${cwd}/legged_gym/legged_gym/scripts/train.py",
+            "console": "integratedTerminal",
+            "python.venvPath": "${HOME}/anaconda3/envs/rlgpu",
+            "python.pythonPath": "${HOME}/anaconda3/envs/rlgpu/bin/python",
+            "python": "/home/anur0n/anaconda3/envs/rlgpu/bin/python",
+            "args": ["--task","visual_anymal_c_rough"],
+            "justMyCode": true
+        },
+        {
+          "name": "Python: aynmal_c train",
+          "type": "python",
+          "request": "launch",
+          "program": "${cwd}/legged_gym/legged_gym/scripts/train.py",
+          "console": "integratedTerminal",
+          "python.venvPath": "${HOME}/anaconda3/envs/rlgpu",
+          "python": "/home/anur0n/anaconda3/envs/rlgpu/bin/python",
+          "args": ["--task","anymal_c_rough"],
+          "justMyCode": true
+        },
+        {
+          "name": "Python: skinner train",
+          "type": "python",
+          "request": "launch",
+          "program": "${cwd}/isaacgym/legged_gym/legged_gym/scripts/train.py",
+          "console": "integratedTerminal",
+          "python.venvPath": "${HOME}/anaconda3/envs/",
+          "python.pythonPath": "${HOME}/anaconda3/envs/rlgpu/bin/python",
+          "args": ["--task","skinner"],
+          "justMyCode": true
+        },
+        {
+            "name": "Docker Python: legged gym train",
+            "type": "python",
+            "request": "launch",
+            "python.defaultInterpreterPath": "/opt/conda/bin/python",
+            "program": "/opt/isaacgym/legged_gym/legged_gym/scripts/train.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Docker: Python - isaacgym",
+            "type": "docker",
+            "request": "launch",
+            "preLaunchTask": "docker-run: debug",
+            "python": {
+              "pathMappings": [
+                {
+                  "localRoot": "${workspaceFolder}",
+                  "remoteRoot": "/app"
+                }
+              ],
+              "projectType": "django"
+            }
+          }
+    ]
+}
