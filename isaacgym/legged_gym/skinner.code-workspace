@@ -1,0 +1,34 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../rsl_rl"
+		}
+	],
+	"settings": {},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"name": "skinner train",
+				"type": "python",
+				"request": "launch",
+				"program": "/home/intuinno/codegit/legged_gym/legged_gym/scripts/train.py",
+				"args": ["--task=skinner", "--num_envs=2", "--experiment=test", "--run_name=test-run", "--save_camera"],
+				"console": "integratedTerminal",
+				"justMyCode": true
+			},
+			{
+				"name": "skinner play",
+				"type": "python",
+				"request": "launch",
+				"program": "/home/intuinno/codegit/legged_gym/legged_gym/scripts/skinner_play.py",
+				"args": ["--task=skinner", "--experiment=skinner01-lin_velocity", "--num_envs=1"],
+				"console": "integratedTerminal",
+				"justMyCode": true
+			}
+		]
+	}
+}
