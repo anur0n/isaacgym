@@ -11,5 +11,5 @@ __pycache__
 # vs code
 .vscode
 
-*/legged_gym/logs/*
+*/legged_gym/logs*
 */runs/*
