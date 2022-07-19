@@ -42,7 +42,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from rsl_rl.algorithms import PPO
-from rsl_rl.modules import VisualActorCritic, ActorCriticRecurrent
+from rsl_rl.modules import VisualActorCritic, ActorCritic, ActorCriticRecurrent
 from rsl_rl.env import VecEnv
 
 
@@ -63,19 +63,15 @@ class VisualOnPolicyRunner:
             num_critic_obs = self.env.num_privileged_obs 
         else:
             num_critic_obs = self.env.num_obs
-        actor_critic_class = eval(self.cfg["policy_class_name"]) # VisualActorCritic
-        actor_critic: VisualActorCritic = actor_critic_class(self.env.num_obs,
-                                                        num_critic_obs,
-                                                        self.env.num_actions,
-                                                        self.env.num_envs,
-                                                        **self.policy_cfg).to(self.device)
+        actor_critic_class = eval(self.cfg["policy_class_name"]) # ActorCritic
+        actor_critic: VisualActorCritic = actor_critic_class(self.env.num_envs, **self.policy_cfg).to(self.device)
         alg_class = eval(self.cfg["algorithm_class_name"]) # PPO
         self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
 
         # init storage and model
-        self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.env.num_obs], [self.env.num_privileged_obs], [self.env.num_actions])
+        self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.policy_cfg["num_obs"]], [self.policy_cfg["num_privileged_obs"]], [self.policy_cfg["num_actions"]])
 
         # Log
         self.log_dir = log_dir
@@ -83,8 +79,21 @@ class VisualOnPolicyRunner:
         self.tot_timesteps = 0
         self.tot_time = 0
         self.current_learning_iteration = 0
-        self.mean_episode_rewards = []
-        self.mean_episode_length = []
+
+        # Load pretrained policy
+        policy_path = self.cfg["pretrained_policy_path"]
+        policy_loaded_dict = torch.load(policy_path)
+        self.policy = ActorCritic( self.cfg["pretrained_num_obs"],
+                              self.cfg["pretrained_num_critic_obs"],
+                              self.cfg["pretrained_num_actions"],
+                              self.cfg["pretrained_actor_hidden_dims"],
+                              self.cfg["pretrained_critic_hidden_dims"],
+                              self.cfg["pretrained_activation"], 
+                              self.cfg["pretrained_init_noise_std"]
+                              ).to(self.device)
+        self.policy.load_state_dict(policy_loaded_dict['model_state_dict'])
+        self.policy.eval()
+        self.policy.to(self.device)
 
         _, _ = self.env.reset()
     
@@ -95,7 +104,9 @@ class VisualOnPolicyRunner:
         if init_at_random_ep_len:
             self.env.episode_length_buf = torch.randint_like(self.env.episode_length_buf, high=int(self.env.max_episode_length))
         obs = self.env.get_observations()
+        pretrained_obs = self.env.get_pretrained_observations()
         privileged_obs = self.env.get_privileged_observations()
+
         critic_obs = privileged_obs if privileged_obs is not None else obs
         obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
         self.alg.actor_critic.train() # switch to train mode (for dropout for example)
@@ -109,7 +120,7 @@ class VisualOnPolicyRunner:
         tot_iter = self.current_learning_iteration + num_learning_iterations
         
         # prof = torch.profiler.profile(schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
-        #                             on_trace_ready=torch.profiler.tensorboard_trace_handler('/home/anur0n/isaacgym/isaacgym/legged_gym/logs/original_profile'),
+        #                             on_trace_ready=torch.profiler.tensorboard_trace_handler(f'{LEGGED_GYM_ROOT_DIR}/logs/original_profile'),
         #                             record_shapes=True,
         #                             profile_memory=True,
         #                             with_stack=True)
@@ -120,10 +131,12 @@ class VisualOnPolicyRunner:
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
-                    actions = self.alg.act(obs, critic_obs)
+                    commands = self.alg.act(obs, critic_obs)
+                    actions = self.build_actions(commands, pretrained_obs)
                     obs, privileged_obs, rewards, dones, infos = self.env.step(actions)
                     critic_obs = privileged_obs if privileged_obs is not None else obs
                     obs, critic_obs, rewards, dones = obs.to(self.device), critic_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
+                    pretrained_obs = self.env.get_pretrained_observations().to(self.device)
                     self.alg.process_env_step(rewards, dones, infos)
                     
                     if self.log_dir is not None:
@@ -153,7 +166,6 @@ class VisualOnPolicyRunner:
                 self.log(locals())
             if it % self.save_interval == 0:
                 self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
-                self.plot(os.path.join(self.log_dir, 'training_plot.png'), locals())
             ep_infos.clear()
             
         
@@ -161,6 +173,12 @@ class VisualOnPolicyRunner:
         self.current_learning_iteration += num_learning_iterations
         self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(self.current_learning_iteration)))
 
+    def build_actions(self, commands, pretrained_obs):
+        updated_obs = pretrained_obs.clone().detach().to(self.device)
+        updated_obs[:,9:12 ] = commands[:, :3]
+        actions = self.policy.act_inference(updated_obs)
+        return actions
+        
     def log(self, locs, width=80, pad=35):
         self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
         self.tot_time += locs['collection_time'] + locs['learn_time']
@@ -229,30 +247,6 @@ class VisualOnPolicyRunner:
                        f"""{'ETA:':>{pad}} {self.tot_time / (locs['it'] + 1) * (
                                locs['num_learning_iterations'] - locs['it']):.1f}s\n""")
         print(log_string)
-
-    def plot(self, path, locals):
-        self.mean_episode_rewards.append(statistics.mean(locals['rewbuffer']))
-        self.mean_episode_length.append(statistics.mean(locals['lenbuffer']))
-
-        fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-
-        episodes = [int(i)*self.save_interval for i in range(len(self.mean_episode_rewards))]
-        
-        ax[0].grid(alpha=0.5)
-        ax[0].plot(episodes, self.mean_episode_rewards, label='Mean rewards', color='#5DADE2')
-        ax[0].set_title("Mean rewards")
-        ax[0].set_xlabel("Episodes")
-        ax[0].legend()
-        
-        ax[1].grid(alpha=0.5)
-        ax[1].plot(episodes, self.mean_episode_length, label='Mean ep length', color='#C39BD3')
-        ax[1].set_xlabel("Episodes")
-        ax[1].set_title("Mean Episode length")
-        ax[1].legend()
-        
-        plt.savefig(path)
-        plt.close()
-
 
     def save(self, path, infos=None):
         torch.save({

@@ -225,7 +225,7 @@ class VisualLeggedRobot(BaseTask):
     def compute_observations(self):
         """ Computes observations
         """
-        self.obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
+        self.pretrained_obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
                                     self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
                                     self.commands[:, :3] * self.commands_scale,
@@ -236,11 +236,9 @@ class VisualLeggedRobot(BaseTask):
         # add perceptive inputs if not blind
         if self.cfg.terrain.measure_heights:
             heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights, -1, 1.) * self.obs_scales.height_measurements
-            self.obs_buf = torch.cat((self.obs_buf, heights), dim=-1)
+            self.pretrained_obs_buf = torch.cat((self.pretrained_obs_buf, heights), dim=-1)
 
-        # add noise if needed
-        if self.add_noise:
-            self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
+        
 
         if self.save_camera:
             path = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', 'camera_frames')
@@ -253,13 +251,19 @@ class VisualLeggedRobot(BaseTask):
                                                 filename)
             self.img_idx += 1
 
-        self.camera_buffers = torch.stack(self.camera_tensors)[:, :, :, :3].permute(0, 3, 1, 2) / 255.
+        self.camera_buffers = torch.stack(self.camera_tensors)[:,:,:,:3].permute(0,3,1,2) / 255.
         # print("Shape: ", self.camera_buffers.shape)
         # sys.exit()
-        # self.obs_buf = torch.cat((self.base_lin_vel, self.commands[:, :3], torch.reshape(self.camera_buffers, (self.num_envs, -1))), dim=-1)
+        self.obs_buf = torch.cat((self.base_lin_vel, self.commands[:, :3], torch.reshape(self.camera_buffers, (self.num_envs, -1))), dim=-1)
         # self.obs_buf = torch.cat((self.obs_buf, torch.reshape(self.camera_buffers, (self.num_envs, -1))), dim=-1)
-        self.obs_buf = torch.reshape(self.camera_buffers, (self.num_envs, -1))
+        # self.obs_buf = torch.reshape(self.camera_buffers, (self.num_envs, -1))
 
+        # add noise if needed
+        if self.add_noise:
+            self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
+    
+    def get_pretrained_observations(self):
+        return self.pretrained_obs_buf
 
     def create_sim(self):
         """ Creates simulation, terrain and evironments
@@ -563,6 +567,7 @@ class VisualLeggedRobot(BaseTask):
         self.negative_marker_root_positions = self.negative_marker_states[:, 0:3]
 
         # initialize some data used later on
+        self.pretrained_obs_buf = torch.zeros(self.num_envs, self.cfg.env.num_pretrained_observations, device=self.device, dtype=torch.float)
         self.common_step_counter = 0
         self.extras = {}
         self.noise_scale_vec = self._get_noise_scale_vec(self.cfg)
@@ -969,97 +974,98 @@ class VisualLeggedRobot(BaseTask):
         return heights.view(self.num_envs, -1) * self.terrain.cfg.vertical_scale
 
     #------------ reward functions----------------
-    def _reward_lin_vel_z(self):
-        # Penalize z axis base linear velocity
-        return torch.square(self.base_lin_vel[:, 2])
-    
-    def _reward_ang_vel_xy(self):
-        # Penalize xy axes base angular velocity
-        return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
-    
-    def _reward_orientation(self):
-        # Penalize non flat base orientation
-        return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
 
-    def _reward_base_height(self):
-        # Penalize base height away from target
-        base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
-        return torch.square(base_height - self.cfg.rewards.base_height_target)
+    # def _reward_lin_vel_z(self):
+    #     # Penalize z axis base linear velocity
+    #     return torch.square(self.base_lin_vel[:, 2])
     
-    def _reward_torques(self):
-        # Penalize torques
-        return torch.sum(torch.square(self.torques), dim=1)
+    # def _reward_ang_vel_xy(self):
+    #     # Penalize xy axes base angular velocity
+    #     return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
+    
+    # def _reward_orientation(self):
+    #     # Penalize non flat base orientation
+    #     return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
 
-    def _reward_dof_vel(self):
-        # Penalize dof velocities
-        return torch.sum(torch.square(self.dof_vel), dim=1)
+    # def _reward_base_height(self):
+    #     # Penalize base height away from target
+    #     base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
+    #     return torch.square(base_height - self.cfg.rewards.base_height_target)
     
-    def _reward_dof_acc(self):
-        # Penalize dof accelerations
-        return torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1)
-    
-    def _reward_action_rate(self):
-        # Penalize changes in actions
-        return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
-    
-    def _reward_collision(self):
-        # Penalize collisions on selected bodies
-        return torch.sum(1.*(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1), dim=1)
-    
-    def _reward_termination(self):
-        # Terminal reward / penalty
-        return self.reset_buf * ~self.time_out_buf
-    
-    def _reward_dof_pos_limits(self):
-        # Penalize dof positions too close to the limit
-        out_of_limits = -(self.dof_pos - self.dof_pos_limits[:, 0]).clip(max=0.) # lower limit
-        out_of_limits += (self.dof_pos - self.dof_pos_limits[:, 1]).clip(min=0.)
-        return torch.sum(out_of_limits, dim=1)
+    # def _reward_torques(self):
+    #     # Penalize torques
+    #     return torch.sum(torch.square(self.torques), dim=1)
 
-    def _reward_dof_vel_limits(self):
-        # Penalize dof velocities too close to the limit
-        # clip to max error = 1 rad/s per joint to avoid huge penalties
-        return torch.sum((torch.abs(self.dof_vel) - self.dof_vel_limits*self.cfg.rewards.soft_dof_vel_limit).clip(min=0., max=1.), dim=1)
-
-    def _reward_torque_limits(self):
-        # penalize torques too close to the limit
-        return torch.sum((torch.abs(self.torques) - self.torque_limits*self.cfg.rewards.soft_torque_limit).clip(min=0.), dim=1)
-
-    def _reward_tracking_lin_vel(self):
-        # Tracking of linear velocity commands (xy axes)
-        lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
-        return torch.exp(-lin_vel_error/self.cfg.rewards.tracking_sigma)
+    # def _reward_dof_vel(self):
+    #     # Penalize dof velocities
+    #     return torch.sum(torch.square(self.dof_vel), dim=1)
     
-    def _reward_tracking_ang_vel(self):
-        # Tracking of angular velocity commands (yaw) 
-        ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-        return torch.exp(-ang_vel_error/self.cfg.rewards.tracking_sigma)
-
-    def _reward_feet_air_time(self):
-        # Reward long steps
-        # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
-        contact = self.contact_forces[:, self.feet_indices, 2] > 1.
-        contact_filt = torch.logical_or(contact, self.last_contacts) 
-        self.last_contacts = contact
-        first_contact = (self.feet_air_time > 0.) * contact_filt
-        self.feet_air_time += self.dt
-        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) # reward only on first contact with the ground
-        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
-        self.feet_air_time *= ~contact_filt
-        return rew_airTime
+    # def _reward_dof_acc(self):
+    #     # Penalize dof accelerations
+    #     return torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1)
     
-    def _reward_stumble(self):
-        # Penalize feet hitting vertical surfaces
-        return torch.any(torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) >\
-             5 *torch.abs(self.contact_forces[:, self.feet_indices, 2]), dim=1)
+    # def _reward_action_rate(self):
+    #     # Penalize changes in actions
+    #     return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
+    
+    # def _reward_collision(self):
+    #     # Penalize collisions on selected bodies
+    #     return torch.sum(1.*(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1), dim=1)
+    
+    # def _reward_termination(self):
+    #     # Terminal reward / penalty
+    #     return self.reset_buf * ~self.time_out_buf
+    
+    # def _reward_dof_pos_limits(self):
+    #     # Penalize dof positions too close to the limit
+    #     out_of_limits = -(self.dof_pos - self.dof_pos_limits[:, 0]).clip(max=0.) # lower limit
+    #     out_of_limits += (self.dof_pos - self.dof_pos_limits[:, 1]).clip(min=0.)
+    #     return torch.sum(out_of_limits, dim=1)
+
+    # def _reward_dof_vel_limits(self):
+    #     # Penalize dof velocities too close to the limit
+    #     # clip to max error = 1 rad/s per joint to avoid huge penalties
+    #     return torch.sum((torch.abs(self.dof_vel) - self.dof_vel_limits*self.cfg.rewards.soft_dof_vel_limit).clip(min=0., max=1.), dim=1)
+
+    # def _reward_torque_limits(self):
+    #     # penalize torques too close to the limit
+    #     return torch.sum((torch.abs(self.torques) - self.torque_limits*self.cfg.rewards.soft_torque_limit).clip(min=0.), dim=1)
+
+    # def _reward_tracking_lin_vel(self):
+    #     # Tracking of linear velocity commands (xy axes)
+    #     lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
+    #     return torch.exp(-lin_vel_error/self.cfg.rewards.tracking_sigma)
+    
+    # def _reward_tracking_ang_vel(self):
+    #     # Tracking of angular velocity commands (yaw) 
+    #     ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
+    #     return torch.exp(-ang_vel_error/self.cfg.rewards.tracking_sigma)
+
+    # def _reward_feet_air_time(self):
+    #     # Reward long steps
+    #     # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
+    #     contact = self.contact_forces[:, self.feet_indices, 2] > 1.
+    #     contact_filt = torch.logical_or(contact, self.last_contacts) 
+    #     self.last_contacts = contact
+    #     first_contact = (self.feet_air_time > 0.) * contact_filt
+    #     self.feet_air_time += self.dt
+    #     rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) # reward only on first contact with the ground
+    #     rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
+    #     self.feet_air_time *= ~contact_filt
+    #     return rew_airTime
+    
+    # def _reward_stumble(self):
+    #     # Penalize feet hitting vertical surfaces
+    #     return torch.any(torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) >\
+    #          5 *torch.abs(self.contact_forces[:, self.feet_indices, 2]), dim=1)
         
-    def _reward_stand_still(self):
-        # Penalize motion at zero commands
-        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < 0.1)
+    # def _reward_stand_still(self):
+    #     # Penalize motion at zero commands
+    #     return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < 0.1)
 
-    def _reward_feet_contact_forces(self):
-        # penalize high contact forces
-        return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  self.cfg.rewards.max_contact_force).clip(min=0.), dim=1)
+    # def _reward_feet_contact_forces(self):
+    #     # penalize high contact forces
+    #     return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  self.cfg.rewards.max_contact_force).clip(min=0.), dim=1)
     
     def _reward_positive_balls(self):
         # reward positive balls in close distance

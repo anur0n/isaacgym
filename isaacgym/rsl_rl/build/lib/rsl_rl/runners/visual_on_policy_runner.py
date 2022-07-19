@@ -37,7 +37,7 @@ from torch.utils.tensorboard import SummaryWriter
 import torch
 
 from rsl_rl.algorithms import PPO
-from rsl_rl.modules import VisualActorCritic, ActorCriticRecurrent
+from rsl_rl.modules import VisualActorCritic, ActorCritic, ActorCriticRecurrent
 from rsl_rl.env import VecEnv
 
 
@@ -78,6 +78,21 @@ class VisualOnPolicyRunner:
         self.tot_time = 0
         self.current_learning_iteration = 0
 
+    # Load pretrained policy
+        policy_path = self.cfg["pretrained_policy_path"]
+        policy_loaded_dict = torch.load(policy_path)
+        self.policy = ActorCritic( self.cfg["pretrained_num_obs"],
+                              self.cfg["pretrained_num_critic_obs"],
+                              self.cfg["pretrained_num_actions"],
+                              self.cfg["pretrained_actor_hidden_dims"],
+                              self.cfg["pretrained_critic_hidden_dims"],
+                              self.cfg["pretrained_activation"], 
+                              self.cfg["pretrained_init_noise_std"]
+                              ).to(self.device)
+        self.policy.load_state_dict(policy_loaded_dict['model_state_dict'])
+        self.policy.eval()
+        self.policy.to(self.device)
+
         _, _ = self.env.reset()
     
     def learn(self, num_learning_iterations, init_at_random_ep_len=False):
@@ -87,7 +102,9 @@ class VisualOnPolicyRunner:
         if init_at_random_ep_len:
             self.env.episode_length_buf = torch.randint_like(self.env.episode_length_buf, high=int(self.env.max_episode_length))
         obs = self.env.get_observations()
+        pretrained_obs = self.env.get_pretrained_observations()
         privileged_obs = self.env.get_privileged_observations()
+
         critic_obs = privileged_obs if privileged_obs is not None else obs
         obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
         self.alg.actor_critic.train() # switch to train mode (for dropout for example)
@@ -112,10 +129,12 @@ class VisualOnPolicyRunner:
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
-                    actions = self.alg.act(obs, critic_obs)
+                    commands = self.alg.act(obs, critic_obs)
+                    actions = self.build_actions(commands, pretrained_obs)
                     obs, privileged_obs, rewards, dones, infos = self.env.step(actions)
                     critic_obs = privileged_obs if privileged_obs is not None else obs
                     obs, critic_obs, rewards, dones = obs.to(self.device), critic_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
+                    pretrained_obs = self.env.get_pretrained_observations().to(self.device)
                     self.alg.process_env_step(rewards, dones, infos)
                     
                     if self.log_dir is not None:
@@ -152,6 +171,12 @@ class VisualOnPolicyRunner:
         self.current_learning_iteration += num_learning_iterations
         self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(self.current_learning_iteration)))
 
+    def build_actions(self, commands, pretrained_obs):
+        updated_obs = pretrained_obs.clone().detach().to(self.device)
+        updated_obs[:,9:12 ] = commands[:, :3]
+        actions = self.policy.act_inference(updated_obs)
+        return actions
+        
     def log(self, locs, width=80, pad=35):
         self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
         self.tot_time += locs['collection_time'] + locs['learn_time']

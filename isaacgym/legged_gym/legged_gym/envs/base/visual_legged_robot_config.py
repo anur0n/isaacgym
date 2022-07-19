@@ -29,11 +29,12 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 from .base_config import BaseConfig
+from legged_gym import LEGGED_GYM_ROOT_DIR
 
 CAMERA_WIDTH = 160
 CAMERA_HEIGHT = 120
 NUM_VISUAL_FEATURES = 108
-OTHER_OBSERVATIONS = 0 #235 # 6
+OTHER_OBSERVATIONS = 6 #235 # 6
 CAMERA_CHANNEL = 3
 
         
@@ -47,6 +48,7 @@ class VisualLeggedRobotCfg(BaseConfig):
         camera_height = CAMERA_HEIGHT
         other_observations = OTHER_OBSERVATIONS
         num_observations = camera_height * camera_width * CAMERA_CHANNEL + other_observations
+        num_pretrained_observations = 235
         num_privileged_obs = None # if not None a priviledge_obs_buf will be returned by step() (critic obs for assymetric training). None is returned otherwise 
         num_actions = 12
         env_spacing = 3.  # not used with heightfields/trimeshes 
@@ -81,9 +83,9 @@ class VisualLeggedRobotCfg(BaseConfig):
     class commands:
         curriculum = False
         max_curriculum = 1.
-        num_commands = 4 # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
+        num_commands = 3 # default: lin_vel_x, lin_vel_y, ang_vel_yaw
         resampling_time = 10. # time before command are changed[s]
-        heading_command = True # if true: compute ang vel command from heading error
+        heading_command = False # if true: compute ang vel command from heading error
         class ranges:
             lin_vel_x = [-1.0, 1.0] # min max [m/s]
             lin_vel_y = [-1.0, 1.0]   # min max [m/s]
@@ -143,20 +145,20 @@ class VisualLeggedRobotCfg(BaseConfig):
     class rewards:
         class scales:
             termination = -0.0
-            tracking_lin_vel = 1.0
-            tracking_ang_vel = 0.5
-            lin_vel_z = -2.0
-            ang_vel_xy = -0.05
-            orientation = -0.
-            torques = -0.00001
-            dof_vel = -0.
-            dof_acc = -2.5e-7
-            base_height = -0. 
-            feet_air_time =  1.0
-            collision = -1.
-            feet_stumble = -0.0 
-            action_rate = -0.01
-            stand_still = -0.
+            # tracking_lin_vel = 1.0
+            # tracking_ang_vel = 0.5
+            # lin_vel_z = -2.0
+            # ang_vel_xy = -0.05
+            # orientation = -0.
+            # torques = -0.00001
+            # dof_vel = -0.
+            # dof_acc = -2.5e-7
+            # base_height = -0. 
+            # feet_air_time =  1.0
+            # collision = -1.
+            # feet_stumble = -0.0 
+            # action_rate = -0.01
+            # stand_still = -0.
             positive_balls = 1.0
             negative_balls = 1.0
 
@@ -223,9 +225,12 @@ class VisualLeggedRobotCfgPPO(BaseConfig):
         num_obs = camera_height * camera_width * CAMERA_CHANNEL + OTHER_OBSERVATIONS
         num_visual_features = NUM_VISUAL_FEATURES 
         other_observations = OTHER_OBSERVATIONS
+        num_mlp_input = num_visual_features + other_observations 
+        num_privileged_obs = None # if not None a priviledge_obs_buf will be returned by step() (critic obs for assymetric training). None is returned otherwise 
+        num_actions = 3 # 3 command for walking model. [LinX LinY AngVel]
         init_noise_std = 1.0
-        actor_hidden_dims = [512, 256, 128]
-        critic_hidden_dims = [512, 256, 128]
+        actor_hidden_dims = [4 * num_mlp_input,  2 * num_mlp_input]  # 7 input dimension. 3 for diff location. 4 for commands
+        critic_hidden_dims = [4 * num_mlp_input, 2 * num_mlp_input]
         activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
         # only for 'ActorCriticRecurrent':
         # rnn_type = 'lstm'
@@ -240,21 +245,29 @@ class VisualLeggedRobotCfgPPO(BaseConfig):
         entropy_coef = 0.01
         num_learning_epochs = 5
         num_mini_batches = 16 # mini batch size = num_envs*nsteps / nminibatches
-        learning_rate = 5.e-4 #1.e-3 #5.e-4
+        learning_rate = 1.e-3 #5.e-4
         schedule = 'adaptive' # could be adaptive, fixed
         gamma = 0.99
         lam = 0.95
-        desired_kl = 0.005
+        desired_kl = 0.01
         max_grad_norm = 1.
 
     class runner:
         policy_class_name = 'VisualActorCritic'
         algorithm_class_name = 'PPO'
         num_steps_per_env = 24 # per iteration
-        max_iterations = 100000 # number of policy updates
-
+        max_iterations = 50000 # number of policy updates
+        # Pretrained model parameters
+        pretrained_policy_path = f'{LEGGED_GYM_ROOT_DIR}/resources/walker_nets/walker.pt'
+        pretrained_num_obs = 235
+        pretrained_num_critic_obs = 235
+        pretrained_num_actions = 12
+        pretrained_actor_hidden_dims = [512, 256, 128]
+        pretrained_critic_hidden_dims = [512, 256, 128]
+        pretrained_activation = 'elu'
+        pretrained_init_noise_std = 1.0
         # logging
-        save_interval = 500 # check for potential saves every this many iterations
+        save_interval = 100 # check for potential saves every this many iterations
         experiment_name = 'test'
         run_name = ''
         # load and resume
@@ -262,4 +275,3 @@ class VisualLeggedRobotCfgPPO(BaseConfig):
         load_run = -1 # -1 = last run
         checkpoint = -1 # -1 = last saved model
         resume_path = None # updated from load_run and chkpt
-        

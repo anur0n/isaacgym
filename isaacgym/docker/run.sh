@@ -10,7 +10,7 @@ else
     export DISPLAY=$DISPLAY HOME=$HOME
 	#DISPLAY=`echo $DISPLAY | sed 's/^[^:]*\(.*\)/172.17.0.1\1/'`
 	echo "setting display to $DISPLAY"
-	echo "$HOME"
+	echo "Home path: $HOME"
 	#SOCK=/tmp/.X11-unix
 	#XAUTH=/tmp/.docker.xauth
 	#xauth nlist $DISPLAY | sed -e 's/^..../ffff/' | xauth -f $XAUTH nmerge -

@@ -37,14 +37,12 @@ from torch.nn.modules import rnn
 
 class VisualActorCritic(nn.Module):
     is_recurrent = False
-    def __init__(self,  num_actor_obs,
-                        num_critic_obs,
-                        num_actions,
-                        num_envs,
+    def __init__(self,  num_envs,
                         camera_height,
                         camera_width,
                         num_visual_features,
                         other_observations,
+                        num_actions,
                         actor_hidden_dims=[256, 256, 256],
                         critic_hidden_dims=[256, 256, 256],
                         activation='elu',
