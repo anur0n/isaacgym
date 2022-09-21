@@ -60,7 +60,7 @@ class VisualLeggedRobotCfg(BaseConfig):
         horizontal_scale = 0.1 # [m]
         vertical_scale = 0.005 # [m]
         border_size = 25 # [m]
-        curriculum = True
+        curriculum = False
         static_friction = 1.0
         dynamic_friction = 1.0
         restitution = 0.
@@ -159,8 +159,8 @@ class VisualLeggedRobotCfg(BaseConfig):
             # feet_stumble = -0.0 
             # action_rate = -0.01
             # stand_still = -0.
-            positive_balls = 1.0
-            negative_balls = 1.0
+            positive_balls = 2.0
+            negative_balls = -2.0
 
         only_positive_rewards = True # if true negative total rewards are clipped at zero (avoids early termination problems)
         tracking_sigma = 0.25 # tracking reward = exp(-error^2/sigma)
@@ -242,7 +242,7 @@ class VisualLeggedRobotCfgPPO(BaseConfig):
         value_loss_coef = 1.0
         use_clipped_value_loss = True
         clip_param = 0.2
-        entropy_coef = 0.01
+        entropy_coef = 0.005
         num_learning_epochs = 5
         num_mini_batches = 16 # mini batch size = num_envs*nsteps / nminibatches
         learning_rate = 1.e-3 #5.e-4

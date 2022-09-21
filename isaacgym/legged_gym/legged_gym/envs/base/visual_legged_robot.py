@@ -1070,8 +1070,10 @@ class VisualLeggedRobot(BaseTask):
     def _reward_positive_balls(self):
         # reward positive balls in close distance
 
-        return torch.where(self.positive_dist <= 0.3, 20., 0.)
+        # return torch.sum(torch.where(self.positive_dist <= 0.3, 3., 0.))
+        return torch.where(self.positive_dist <= 0.3, 3., 0.)
 
     def _reward_negative_balls(self):
         # penalize negative balls in close distance
-        return torch.where(self.negative_dist <= 0.3, -20., 0.)
+        # return torch.sum(torch.where(self.negative_dist <= 0.3, 3., 0.))
+        return torch.where(self.negative_dist <= 0.3, 3., 0.)

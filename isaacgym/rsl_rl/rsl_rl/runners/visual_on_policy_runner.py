@@ -269,3 +269,9 @@ class VisualOnPolicyRunner:
         if device is not None:
             self.alg.actor_critic.to(device)
         return self.alg.actor_critic.act_inference
+
+    def get_pretrained_inference_policy(self, device=None):
+        self.policy.eval() # switch to evaluation mode (dropout for example)
+        if device is not None:
+            self.policy.to(device)
+        return self.policy.act_inference

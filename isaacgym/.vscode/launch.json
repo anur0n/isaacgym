@@ -5,6 +5,7 @@
     "version": "0.2.0",
     "configurations": [
 
+
         {
             "name": "Python: Current File",
             "type": "python",
@@ -14,7 +15,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: legged gym train",
+            "name": "Python: visual anymal train",
             "type": "python",
             "request": "launch",
             "program": "${cwd}/legged_gym/legged_gym/scripts/train.py",
@@ -24,6 +25,17 @@
             "python": "/home/anur0n/anaconda3/envs/rlgpu/bin/python",
             "args": ["--task","visual_anymal_c_rough", "--max_iterations", "2", "--num_envs", "256"],
             "justMyCode": true
+        },
+        {
+          "name": "Python: visual anymal play",
+          "type": "python",
+          "request": "launch",
+          "program": "${cwd}/legged_gym/legged_gym/scripts/visual_play.py",
+          "console": "integratedTerminal",
+          "python.venvPath": "${HOME}/anaconda3/envs/",
+          "python": "/home/anur0n/anaconda3/envs/rlgpu/bin/python",
+          "args": ["--task","visual_anymal_c_rough"],
+          "justMyCode": true
         },
         {
           "name": "Python_Profile: legged gym train",
