@@ -32,11 +32,11 @@ from legged_gym.envs.base.visual_legged_robot_config import VisualLeggedRobotCfg
 
 class VisualAnymalCRoughCfg( VisualLeggedRobotCfg ):
     class env( VisualLeggedRobotCfg.env ):
-        num_envs = 256
+        num_envs = 1024
         num_actions = 12
 
     class terrain( VisualLeggedRobotCfg.terrain ):
-        mesh_type = 'trimesh'
+        mesh_type = 'plane'
 
     class init_state( VisualLeggedRobotCfg.init_state ):
         pos = [0.0, 0.0, 0.6] # x,y,z [m]
@@ -77,7 +77,7 @@ class VisualAnymalCRoughCfg( VisualLeggedRobotCfg ):
         self_collisions = 1 # 1 to disable, 0 to enable...bitwise filter
 
     class domain_rand( VisualLeggedRobotCfg.domain_rand):
-        randomize_base_mass = True
+        randomize_base_mass = False
         added_mass_range = [-5., 5.]
   
     class rewards( VisualLeggedRobotCfg.rewards ):

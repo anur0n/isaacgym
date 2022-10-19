@@ -120,6 +120,7 @@ class PPO:
     def update(self):
         mean_value_loss = 0
         mean_surrogate_loss = 0
+        mean_total_loss = 0
         if self.actor_critic.is_recurrent:
             generator = self.storage.reccurent_mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
         else:
@@ -143,9 +144,9 @@ class PPO:
                         kl_mean = torch.mean(kl)
 
                         if kl_mean > self.desired_kl * 2.0:
-                            self.learning_rate = max(1e-6, self.learning_rate / 1.5)
+                            self.learning_rate = max(1e-5, self.learning_rate / 1.5)
                         elif kl_mean < self.desired_kl / 2.0 and kl_mean > 0.0:
-                            self.learning_rate = min(1e-1, self.learning_rate * 1.5)
+                            self.learning_rate = min(1e-2, self.learning_rate * 1.5)
                         
                         for param_group in self.optimizer.param_groups:
                             param_group['lr'] = self.learning_rate
@@ -168,7 +169,9 @@ class PPO:
                 else:
                     value_loss = (returns_batch - value_batch).pow(2).mean()
 
-                loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
+                # loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
+                loss = surrogate_loss + self.value_loss_coef * value_loss - (self.entropy_coef * entropy_batch.mean())#.clamp(0.0, 0.18)
+                # print('Clamped ppo')
 
                 # Gradient step
                 self.optimizer.zero_grad()
@@ -178,10 +181,12 @@ class PPO:
 
                 mean_value_loss += value_loss.item()
                 mean_surrogate_loss += surrogate_loss.item()
+                mean_total_loss += loss.item()
 
         num_updates = self.num_learning_epochs * self.num_mini_batches
         mean_value_loss /= num_updates
         mean_surrogate_loss /= num_updates
+        mean_total_loss /= num_updates
         self.storage.clear()
 
-        return mean_value_loss, mean_surrogate_loss
+        return mean_value_loss, mean_surrogate_loss, mean_total_loss

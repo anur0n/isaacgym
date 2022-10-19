@@ -132,12 +132,26 @@ class VisualOnPolicyRunner:
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
                     commands = self.alg.act(obs, critic_obs)
-                    actions = self.build_actions(commands, pretrained_obs)
-                    obs, privileged_obs, rewards, dones, infos = self.env.step(actions)
+                    rewards_acc = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
+                    dones_acc = torch.zeros(self.env.num_envs, dtype=torch.bool, device=self.device)
+                    for idx in range(self.cfg['walking_decimation']):
+                        start_time = time.time()
+                        actions = self.build_actions(commands, pretrained_obs)
+                        # print(idx,": --- %s seconds ---" % (time.time() - start_time))
+                        obs, privileged_obs, rewards, dones, infos = self.env.step(actions, idx>8)
+                        # print(idx,": --- %s seconds ---" % (time.time() - start_time))
+                        rewards_acc += rewards
+                        # print(idx,": --- %s seconds ---" % (time.time() - start_time))
+                        dones_acc = torch.logical_or (dones, dones_acc)
+                        # print(idx,": --- %s seconds ---" % (time.time() - start_time))
+                        pretrained_obs = self.env.get_pretrained_observations()
+                        # print(idx,": --- %s seconds ---" % (time.time() - start_time))
+                        pretrained_obs = pretrained_obs.to(self.device)
+                        # print(idx,": --- %s seconds ---" % (time.time() - start_time))
+                    # print('------------------------------------------------------------------')
                     critic_obs = privileged_obs if privileged_obs is not None else obs
-                    obs, critic_obs, rewards, dones = obs.to(self.device), critic_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
-                    pretrained_obs = self.env.get_pretrained_observations().to(self.device)
-                    self.alg.process_env_step(rewards, dones, infos)
+                    obs, critic_obs, rewards_acc, dones_acc = obs.to(self.device), critic_obs.to(self.device), rewards_acc.to(self.device), dones_acc.to(self.device)
+                    self.alg.process_env_step(rewards_acc, dones_acc, infos)
                     
                     if self.log_dir is not None:
                         # Book keeping
@@ -159,7 +173,7 @@ class VisualOnPolicyRunner:
                 self.alg.compute_returns(critic_obs)
                 # prof.step()
             
-            mean_value_loss, mean_surrogate_loss = self.alg.update()
+            mean_value_loss, mean_surrogate_loss, mean_total_loss = self.alg.update()
             stop = time.time()
             learn_time = stop - start
             if self.log_dir is not None:
@@ -203,6 +217,7 @@ class VisualOnPolicyRunner:
 
         self.writer.add_scalar('Loss/value_function', locs['mean_value_loss'], locs['it'])
         self.writer.add_scalar('Loss/surrogate', locs['mean_surrogate_loss'], locs['it'])
+        self.writer.add_scalar('Loss/total', locs['mean_total_loss'], locs['it'])
         self.writer.add_scalar('Loss/learning_rate', self.alg.learning_rate, locs['it'])
         self.writer.add_scalar('Policy/mean_noise_std', mean_std.item(), locs['it'])
         self.writer.add_scalar('Perf/total_fps', fps, locs['it'])
@@ -223,6 +238,7 @@ class VisualOnPolicyRunner:
                             'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
                           f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
                           f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
+                          f"""{'Total loss:':>{pad}} {locs['mean_total_loss']:.4f}\n"""
                           f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
                           f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
                           f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n""")
@@ -235,6 +251,7 @@ class VisualOnPolicyRunner:
                             'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
                           f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
                           f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
+                          f"""{'Total loss:':>{pad}} {locs['mean_total_loss']:.4f}\n"""
                           f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n""")
                         #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
                         #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")

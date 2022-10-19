@@ -34,7 +34,7 @@ from legged_gym import LEGGED_GYM_ROOT_DIR
 CAMERA_WIDTH = 160
 CAMERA_HEIGHT = 120
 NUM_VISUAL_FEATURES = 108
-OTHER_OBSERVATIONS = 6 #235 # 6
+OTHER_OBSERVATIONS = 12 # 3 for previous commands, 3 for lin XYZ, 3 for angular velocity, 3 for projected gravity
 CAMERA_CHANNEL = 3
 
         
@@ -42,8 +42,6 @@ CAMERA_CHANNEL = 3
 class VisualLeggedRobotCfg(BaseConfig):
     class env:
         num_envs = 4096
-        vector_obs = 6
-        # num_observations = CAMERA_WIDTH * CAMERA_HEIGHT * CAMERA_CHANNEL + vector_obs
         camera_width = CAMERA_WIDTH
         camera_height = CAMERA_HEIGHT
         other_observations = OTHER_OBSERVATIONS
@@ -53,10 +51,10 @@ class VisualLeggedRobotCfg(BaseConfig):
         num_actions = 12
         env_spacing = 3.  # not used with heightfields/trimeshes 
         send_timeouts = True # send time out information to the algorithm
-        episode_length_s = 20 # episode length in seconds
+        episode_length_s = 40 # episode length in seconds
 
     class terrain:
-        mesh_type = 'trimesh' # "heightfield" # none, plane, heightfield or trimesh
+        mesh_type = 'plane' # "heightfield" # none, plane, heightfield or trimesh
         horizontal_scale = 0.1 # [m]
         vertical_scale = 0.005 # [m]
         border_size = 25 # [m]
@@ -73,17 +71,17 @@ class VisualLeggedRobotCfg(BaseConfig):
         max_init_terrain_level = 5 # starting curriculum state
         terrain_length = 8.
         terrain_width = 8.
-        num_rows= 10 # number of terrain rows (levels)
-        num_cols = 20 # number of terrain cols (types)
+        num_rows= 2 # number of terrain rows (levels)
+        num_cols = 3 # number of terrain cols (types)
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
-        terrain_proportions = [0.1, 0.1, 0.35, 0.25, 0.2]
+        terrain_proportions = [0.9, 0.1, 0.0, 0.0, 0.0]
         # trimesh only:
         slope_treshold = 0.75 # slopes above this threshold will be corrected to vertical surfaces
 
     class commands:
         curriculum = False
         max_curriculum = 1.
-        num_commands = 3 # default: lin_vel_x, lin_vel_y, ang_vel_yaw
+        num_commands = 3 # default: lin_vel_x, lin_vel_y, ang_vel_yaw)
         resampling_time = 10. # time before command are changed[s]
         heading_command = False # if true: compute ang vel command from heading error
         class ranges:
@@ -145,30 +143,11 @@ class VisualLeggedRobotCfg(BaseConfig):
     class rewards:
         class scales:
             termination = -0.0
-            # tracking_lin_vel = 1.0
-            # tracking_ang_vel = 0.5
-            # lin_vel_z = -2.0
-            # ang_vel_xy = -0.05
-            # orientation = -0.
-            # torques = -0.00001
-            # dof_vel = -0.
-            # dof_acc = -2.5e-7
-            # base_height = -0. 
-            # feet_air_time =  1.0
-            # collision = -1.
-            # feet_stumble = -0.0 
-            # action_rate = -0.01
-            # stand_still = -0.
-            positive_balls = 2.0
-            negative_balls = -2.0
+            blue = 100.0
+            distance = 1.0
 
         only_positive_rewards = True # if true negative total rewards are clipped at zero (avoids early termination problems)
         tracking_sigma = 0.25 # tracking reward = exp(-error^2/sigma)
-        soft_dof_pos_limit = 1. # percentage of urdf limits, values above this limit are penalized
-        soft_dof_vel_limit = 1.
-        soft_torque_limit = 1.
-        base_height_target = 1.
-        max_contact_force = 100. # forces above this value are penalized
 
     class normalization:
         class obs_scales:
@@ -242,9 +221,9 @@ class VisualLeggedRobotCfgPPO(BaseConfig):
         value_loss_coef = 1.0
         use_clipped_value_loss = True
         clip_param = 0.2
-        entropy_coef = 0.005
+        entropy_coef = 0.01
         num_learning_epochs = 5
-        num_mini_batches = 16 # mini batch size = num_envs*nsteps / nminibatches
+        num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
         learning_rate = 1.e-3 #5.e-4
         schedule = 'adaptive' # could be adaptive, fixed
         gamma = 0.99
@@ -256,9 +235,9 @@ class VisualLeggedRobotCfgPPO(BaseConfig):
         policy_class_name = 'VisualActorCritic'
         algorithm_class_name = 'PPO'
         num_steps_per_env = 24 # per iteration
-        max_iterations = 50000 # number of policy updates
+        max_iterations = 1500 # number of policy updates
         # Pretrained model parameters
-        pretrained_policy_path = f'{LEGGED_GYM_ROOT_DIR}/resources/walker_nets/walker.pt'
+        pretrained_policy_path = f'{LEGGED_GYM_ROOT_DIR}/resources/walker_nets/walker_10_decimation.pt'
         pretrained_num_obs = 235
         pretrained_num_critic_obs = 235
         pretrained_num_actions = 12
@@ -267,7 +246,7 @@ class VisualLeggedRobotCfgPPO(BaseConfig):
         pretrained_activation = 'elu'
         pretrained_init_noise_std = 1.0
         # logging
-        save_interval = 100 # check for potential saves every this many iterations
+        save_interval = 50 # check for potential saves every this many iterations
         experiment_name = 'test'
         run_name = ''
         # load and resume
@@ -275,3 +254,5 @@ class VisualLeggedRobotCfgPPO(BaseConfig):
         load_run = -1 # -1 = last run
         checkpoint = -1 # -1 = last saved model
         resume_path = None # updated from load_run and chkpt
+        # Algorithm computes action once every # walking_decimation times 
+        walking_decimation = 10

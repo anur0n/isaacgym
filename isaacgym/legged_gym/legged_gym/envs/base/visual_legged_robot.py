@@ -28,9 +28,15 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
+DEBUG = False 
+
+import math
+
+import imageio
 import sys
 from legged_gym import LEGGED_GYM_ROOT_DIR, envs
 from time import time
+from datetime import datetime
 from warnings import WarningMessage
 import numpy as np
 import os
@@ -65,9 +71,9 @@ class VisualLeggedRobot(BaseTask):
         """
         self.cfg = cfg
         self.sim_params = sim_params
-        self.height_samples = None
-        self.debug_viz = False
         self.save_camera = save_camera
+        self.height_samples = None
+        self.debug_viz = DEBUG
         self.init_done = False
         self._parse_cfg(self.cfg)
         super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
@@ -80,8 +86,9 @@ class VisualLeggedRobot(BaseTask):
 
         if self.save_camera:
             self.img_idx = 0
+            self.save_camera_time_str =  datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%p")
 
-    def step(self, actions):
+    def step(self, actions, access_cam_img = True):
         """ Apply actions, simulate, call self.post_physics_step()
 
         Args:
@@ -90,7 +97,7 @@ class VisualLeggedRobot(BaseTask):
         clip_actions = self.cfg.normalization.clip_actions
         self.actions = torch.clip(actions, -clip_actions, clip_actions).to(self.device)
         # step physics and render each frame
-        self.render()
+        self.render(access_cam_img)
         for _ in range(self.cfg.control.decimation):
             self.torques = self._compute_torques(self.actions).view(self.torques.shape)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
@@ -98,7 +105,7 @@ class VisualLeggedRobot(BaseTask):
             if self.device == 'cpu':
                 self.gym.fetch_results(self.sim, True)
             self.gym.refresh_dof_state_tensor(self.sim)
-        self.post_physics_step()
+        self.post_physics_step(access_cam_img)
 
         # return clipped obs, clipped states (None), rewards, dones and infos
         clip_obs = self.cfg.normalization.clip_observations
@@ -107,11 +114,14 @@ class VisualLeggedRobot(BaseTask):
             self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
         return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
 
-    def render(self):
+    def render(self, access_cam_img=True):
         super().render()
-        self.gym.render_all_camera_sensors(self.sim)
+        if access_cam_img:
+            self.gym.render_all_camera_sensors(self.sim)
 
-    def post_physics_step(self):
+        
+        
+    def post_physics_step(self, access_cam_img=True):
         """ check terminations, compute observations and rewards
             calls self._post_physics_step_callback() for common computations 
             calls self._draw_debug_vis() if needed
@@ -127,19 +137,23 @@ class VisualLeggedRobot(BaseTask):
         self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
+        nose = torch.tensor([1.0,0.,0.], dtype=torch.float, device=self.device, requires_grad=False)
+        ones = torch.ones(self.num_envs, device=self.device, requires_grad=False)
+        nose_broadcast = ones[:, None] * nose
+        self.nose_pos[:] = tf_apply(self.base_quat, self.root_pos, nose_broadcast)
 
         self._post_physics_step_callback()
 
         # compute observations, rewards, resets, ...
         self.check_termination()
-
-        self.gym.start_access_image_tensors(self.sim)
+        if access_cam_img:
+            self.gym.start_access_image_tensors(self.sim)
+        self.compute_observations() # in some cases a simulation step might be required to refresh some obs (for example body positions)
         self.compute_reward()
+        if access_cam_img:
+            self.gym.end_access_image_tensors(self.sim)
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
-        self.compute_observations()  # in some cases a simulation step might be required to refresh some obs (for example body positions)
-        self.gym.end_access_image_tensors(self.sim)
-
 
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
@@ -241,22 +255,28 @@ class VisualLeggedRobot(BaseTask):
         
 
         if self.save_camera:
-            path = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', 'camera_frames')
+            path = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', 'camera_frames', self.save_camera_time_str)
             os.makedirs(path, exist_ok=True)
-            filename = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', 'camera_frames', f"{self.img_idx}.png")
-            self.gym.write_camera_image_to_file(self.sim,
-                                                self.envs[0],
-                                                self.camera_handles[0],
-                                                gymapi.IMAGE_COLOR,
-                                                filename)
+            filename = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', 'camera_frames', self.save_camera_time_str, f"{self.img_idx}.png")
+            # self.gym.write_camera_image_to_file(self.sim,
+            #                                     self.envs[0],
+            #                                     self.camera_handles[0],
+            #                                     gymapi.IMAGE_COLOR,
+            #                                     filename)
+            cam_img = self.camera_tensors[0].cpu().numpy()
+            imageio.imwrite(filename, cam_img)
             self.img_idx += 1
 
         self.camera_buffers = torch.stack(self.camera_tensors)[:,:,:,:3].permute(0,3,1,2) / 255.
-        # print("Shape: ", self.camera_buffers.shape)
-        # sys.exit()
-        self.obs_buf = torch.cat((self.base_lin_vel, self.commands[:, :3], torch.reshape(self.camera_buffers, (self.num_envs, -1))), dim=-1)
-        # self.obs_buf = torch.cat((self.obs_buf, torch.reshape(self.camera_buffers, (self.num_envs, -1))), dim=-1)
-        # self.obs_buf = torch.reshape(self.camera_buffers, (self.num_envs, -1))
+        
+        self.obs_buf = torch.cat((self.base_lin_vel * self.obs_scales.lin_vel,
+                                  self.commands[:, :3],
+                                  self.base_ang_vel * self.obs_scales.ang_vel,
+                                  self.projected_gravity,
+                                  torch.reshape(self.camera_buffers, (self.num_envs, -1))), dim=-1)
+        
+
+
 
         # add noise if needed
         if self.add_noise:
@@ -337,11 +357,6 @@ class VisualLeggedRobot(BaseTask):
                 self.dof_pos_limits[i, 1] = props["upper"][i].item()
                 self.dof_vel_limits[i] = props["velocity"][i].item()
                 self.torque_limits[i] = props["effort"][i].item()
-                # soft limits
-                m = (self.dof_pos_limits[i, 0] + self.dof_pos_limits[i, 1]) / 2
-                r = self.dof_pos_limits[i, 1] - self.dof_pos_limits[i, 0]
-                self.dof_pos_limits[i, 0] = m - 0.5 * r * self.cfg.rewards.soft_dof_pos_limit
-                self.dof_pos_limits[i, 1] = m + 0.5 * r * self.cfg.rewards.soft_dof_pos_limit
         return props
 
     def _process_rigid_body_props(self, props, env_id):
@@ -363,14 +378,11 @@ class VisualLeggedRobot(BaseTask):
         """
         # 
         env_ids = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
-        self._resample_commands(env_ids)
+        # self._resample_commands(env_ids)
 
-        # Calculate marker_dist 
-        diff_pos = self.positive_marker_root_positions - self.root_pos
-        self.positive_dist = torch.sqrt(torch.square(diff_pos).sum(-1))
-        
-        diff_pos = self.negative_marker_root_positions - self.root_pos
-        self.negative_dist = torch.sqrt(torch.square(diff_pos).sum(-1))
+        # Calculate target_dist 
+        self.diff_pos = self.target_root_positions - self.nose_pos
+        self.target_dist = torch.square(self.diff_pos).sum(-1)
 
         if self.cfg.commands.heading_command:
             forward = quat_apply(self.base_quat, self.forward_vec)
@@ -462,7 +474,7 @@ class VisualLeggedRobot(BaseTask):
         actor_indices= self.all_actor_indices[env_ids,0].flatten()
 
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
-                                                     self.root_tensors,
+                                                     self.root_tensor,
                                                      gymtorch.unwrap_tensor(actor_indices), len(env_ids_int32))
 
     def _push_robots(self):
@@ -535,7 +547,7 @@ class VisualLeggedRobot(BaseTask):
         """ Initialize torch tensors which will contain simulation states and processed quantities
         """
         # get gym GPU state tensors
-        self.root_tensors = self.gym.acquire_actor_root_state_tensor(self.sim)
+        self.root_tensor = self.gym.acquire_actor_root_state_tensor(self.sim)
         self.dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
         net_contact_forces = self.gym.acquire_net_contact_force_tensor(self.sim)
         self.gym.refresh_dof_state_tensor(self.sim)
@@ -543,28 +555,23 @@ class VisualLeggedRobot(BaseTask):
         self.gym.refresh_net_contact_force_tensor(self.sim)
 
         # create some wrapper tensors for different slices
-        vec_root_tensor = gymtorch.wrap_tensor(self.root_tensors).view(self.num_envs, 3, 13)
+        vec_root_tensor = gymtorch.wrap_tensor(self.root_tensor).view(self.num_envs, 2, 13)
 
-        # create some wrapper tensors for different slices
+        # Set up anymal buffer
         self.root_states = vec_root_tensor[:, 0, :]
         self.dof_state = gymtorch.wrap_tensor(self.dof_state_tensor)
-
         self.root_pos = self.root_states[:, 0:3]
-
         self.dof_pos = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 0]
         self.dof_vel = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
         self.base_quat = self.root_states[:, 3:7]
-
         self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3) # shape: num_envs, num_bodies, xyz axis
 
         # Set up ball marker buffer
-        self.positive_marker_states = vec_root_tensor[:, 1, :]
-        self.positive_marker_positions = self.positive_marker_states[:, 0:3]
-        self.positive_marker_root_positions = self.positive_marker_states[:, 0:3]
-
-        self.negative_marker_states = vec_root_tensor[:, 2, :]
-        self.negative_marker_positions = self.negative_marker_states[:, 0:3]
-        self.negative_marker_root_positions = self.negative_marker_states[:, 0:3]
+        self.marker_states = vec_root_tensor[:, 1, :]
+        self.marker_positions = self.marker_states[:, 0:3]
+        # self.target_root_positions = torch.zeros((self.num_envs, 3), device=self.device, dtype=torch.float32)
+        # self.target_root_positions[:, 2] = 1
+        self.target_root_positions = self.marker_states[:, 0:3]
 
         # initialize some data used later on
         self.pretrained_obs_buf = torch.zeros(self.num_envs, self.cfg.env.num_pretrained_observations, device=self.device, dtype=torch.float)
@@ -591,7 +598,8 @@ class VisualLeggedRobot(BaseTask):
             self.height_points = self._init_height_points()
         self.measured_heights = 0
 
-        self.all_actor_indices = torch.arange(self.num_envs * 3, dtype=torch.int32, device=self.device).reshape((self.num_envs, 3))
+        self.all_actor_indices = torch.arange(self.num_envs * 2, dtype=torch.int32, device=self.device).reshape((self.num_envs, 2))
+        self.nose_pos = torch.zeros(self.num_envs, 3, device=self.device, requires_grad=False)
 
         # joint positions offsets and PD gains
         self.default_dof_pos = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
@@ -673,14 +681,10 @@ class VisualLeggedRobot(BaseTask):
         # self.target_root_positions[env_ids, 0:2] = (torch.rand(num_sets, 2, device=self.device) * 10) - 5
         # self.target_root_positions[env_ids, 2] = torch.rand(num_sets, device=self.device) + 1
         # self.marker_positions[env_ids] = self.target_root_positions[env_ids]
-        self.positive_marker_positions[env_ids] = self.env_origins[env_ids]
-        self.positive_marker_positions[env_ids, 0:2] += torch_rand_float(-3.0, 3.0, (len(env_ids), 2), device=self.device)
-        self.positive_marker_positions[env_ids, 2] += 3.0
+        self.marker_positions[env_ids] = self.env_origins[env_ids]
+        self.marker_positions[env_ids, 0:2] += torch_rand_float(-8.0, 8.0, (len(env_ids), 2), device=self.device)
+        self.marker_positions[env_ids, 2] += 5.0
         # copter "position" is at the bottom of the legs, so shift the target up so it visually aligns better
-
-        self.negative_marker_positions[env_ids] = self.env_origins[env_ids]
-        self.negative_marker_positions[env_ids, 0:2] += torch_rand_float(-3.0, 3.0, (len(env_ids), 2), device=self.device)
-        self.negative_marker_positions[env_ids, 2] += 3.0
 
         # actor_indices = self.all_actor_indices[env_ids, 1].flatten()
 
@@ -773,24 +777,6 @@ class VisualLeggedRobot(BaseTask):
         start_pose = gymapi.Transform()
         start_pose.p = gymapi.Vec3(*self.base_init_state[:3])
 
-
-        # Camera Propoerties
-        camera_offset = gymapi.Vec3(0.6, 0, 1.0)
-        camera_rotation = gymapi.Quat.from_axis_angle(gymapi.Vec3(0, 1, 0), np.deg2rad(0))
-        camera_properties = gymapi.CameraProperties()
-        camera_properties.width = self.cfg.env.camera_width
-        camera_properties.height = self.cfg.env.camera_height
-        camera_properties.enable_tensors = True
-        camera_properties.horizontal_fov = 170
-
-        self._get_env_origins()
-        env_lower = gymapi.Vec3(0., 0., 0.)
-        env_upper = gymapi.Vec3(0., 0., 0.)
-        self.actor_handles = []
-        self.camera_handles = []
-        self.envs = []
-        self.marker_handles = []
-
         # Ball marker asset
         asset_options = gymapi.AssetOptions()
         asset_options.fix_base_link = False
@@ -802,6 +788,24 @@ class VisualLeggedRobot(BaseTask):
         default_pose = gymapi.Transform()
         default_pose.p.z = 1.0
 
+        self._get_env_origins()
+        env_lower = gymapi.Vec3(0., 0., 0.)
+        env_upper = gymapi.Vec3(0., 0., 0.)
+        self.actor_handles = []
+        self.marker_handles = []
+        self.envs = []
+        self.camera_handles = []
+
+        # Camera Propoerties
+        camera_offset = gymapi.Vec3(0.6, 0, 1.0)
+        camera_rotation = gymapi.Quat.from_axis_angle(gymapi.Vec3(0, 1, 0), np.deg2rad(0))
+        camera_properties = gymapi.CameraProperties()
+        camera_properties.width = self.cfg.env.camera_width
+        camera_properties.height = self.cfg.env.camera_height
+        camera_properties.enable_tensors = True
+        camera_properties.horizontal_fov = 170
+
+
         for i in range(self.num_envs):
             # create env instance
             env_handle = self.gym.create_env(self.sim, env_lower, env_upper, int(np.sqrt(self.num_envs)))
@@ -809,42 +813,32 @@ class VisualLeggedRobot(BaseTask):
             pos[:2] += torch_rand_float(-1., 1., (2,1), device=self.device).squeeze(1)
             start_pose.p = gymapi.Vec3(*pos)
                 
+            # create anymal robot
             rigid_shape_props = self._process_rigid_shape_props(rigid_shape_props_asset, i)
             self.gym.set_asset_rigid_shape_properties(robot_asset, rigid_shape_props)
-            actor_handle = self.gym.create_actor(env_handle, robot_asset, start_pose, self.cfg.asset.name, i, self.cfg.asset.self_collisions, 0)
+            actor_handle = self.gym.create_actor(env_handle, robot_asset, start_pose, self.cfg.asset.name, i, 1, 1)
             dof_props = self._process_dof_props(dof_props_asset, i)
             self.gym.set_actor_dof_properties(env_handle, actor_handle, dof_props)
             body_props = self.gym.get_actor_rigid_body_properties(env_handle, actor_handle)
             body_props = self._process_rigid_body_props(body_props, i)
             self.gym.set_actor_rigid_body_properties(env_handle, actor_handle, body_props, recomputeInertia=True)
-            self.envs.append(env_handle)
-            self.actor_handles.append(actor_handle)
-
-            # Add a camera to the base of anymal
-
-            # cam_target = gymapi.Vec3(0.0, 0.0, -1.0)
-
             base_handle = self.gym.get_actor_rigid_body_handle(env_handle, actor_handle, 0)
-            camera_handle = self.gym.create_camera_sensor(env_handle, camera_properties)
-            self.gym.attach_camera_to_body(camera_handle, env_handle, base_handle,
-                                           gymapi.Transform(camera_offset, camera_rotation), gymapi.FOLLOW_TRANSFORM)
-            # self.gym.set_camera_location(camera_handle, env_handle, camera_offset, cam_target)
-            self.camera_handles.append(camera_handle)
 
-            pos[:2] += torch_rand_float(-3., 3., (2,1), device=self.device).squeeze(1) 
-            
-            default_pose.p = gymapi.Vec3(*pos)
             #Add ballmarker
+            pos[:2] += torch_rand_float(-3., 3., (2,1), device=self.device).squeeze(1) 
+            pos[2] = 0.5
+            default_pose.p = gymapi.Vec3(*pos)
+            
             marker_handle = self.gym.create_actor(env_handle, marker_asset, default_pose, "marker", i, 1, 1)
             self.gym.set_rigid_body_color(env_handle, marker_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, gymapi.Vec3(0, 0, 1))
-            self.marker_handles.append(marker_handle)
 
-            pos[:2] += torch_rand_float(-3., 3., (2,1), device=self.device).squeeze(1) 
-            
-            default_pose.p = gymapi.Vec3(*pos)
-            
-            marker_handle = self.gym.create_actor(env_handle, marker_asset, default_pose, "marker", i, 1, 1)
-            self.gym.set_rigid_body_color(env_handle, marker_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, gymapi.Vec3(1, .1, .2))
+            #Add a camera to the base of anymal
+            camera_handle = self.gym.create_camera_sensor(env_handle, camera_properties)
+            self.gym.attach_camera_to_body(camera_handle, env_handle, base_handle, gymapi.Transform(camera_offset, camera_rotation), gymapi.FOLLOW_TRANSFORM)
+            self.camera_handles.append(camera_handle)
+
+            self.envs.append(env_handle)
+            self.actor_handles.append(actor_handle)
             self.marker_handles.append(marker_handle)
 
         self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
@@ -905,19 +899,70 @@ class VisualLeggedRobot(BaseTask):
         # draw height lines
         if not self.terrain.cfg.measure_heights:
             return
+
+        DRAW_HEIGHTS = False
+        DRAW_NOSE = True
+        DRAW_CAMERA_AXES = True
+        
         self.gym.clear_lines(self.viewer)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
-        sphere_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 1, 0))
-        for i in range(self.num_envs):
-            base_pos = (self.root_states[i, :3]).cpu().numpy()
-            heights = self.measured_heights[i].cpu().numpy()
-            height_points = quat_apply_yaw(self.base_quat[i].repeat(heights.shape[0]), self.height_points[i]).cpu().numpy()
-            for j in range(heights.shape[0]):
-                x = height_points[j, 0] + base_pos[0]
-                y = height_points[j, 1] + base_pos[1]
-                z = heights[j]
-                sphere_pose = gymapi.Transform(gymapi.Vec3(x, y, z), r=None)
-                gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[i], sphere_pose) 
+
+        if DRAW_HEIGHTS:
+            sphere_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 1, 0))
+            for i in range(self.num_envs):
+                base_pos = (self.root_states[i, :3]).cpu().numpy()
+                heights = self.measured_heights[i].cpu().numpy()
+                height_points = quat_apply_yaw(self.base_quat[i].repeat(heights.shape[0]), self.height_points[i]).cpu().numpy()
+                for j in range(heights.shape[0]):
+                    x = height_points[j, 0] + base_pos[0]
+                    y = height_points[j, 1] + base_pos[1]
+                    z = heights[j]
+                    sphere_pose = gymapi.Transform(gymapi.Vec3(x, y, z), r=None)
+                    gymutil.draw_lines(sphere_geom, self.gym, self.viewer, None, sphere_pose) 
+        
+        if DRAW_NOSE:
+            sphere_geom = gymutil.WireframeSphereGeometry(0.1, 4, 4, None, color=(1, 1, 0))
+            axes_geom = gymutil.AxesGeometry(scale=1.0)
+            
+            for i in range(self.num_envs):
+                base_pos = (self.root_states[i,:3]).cpu().numpy()
+                base_pos = gymapi.Vec3(*base_pos)
+                base_quat = gymapi.Quat(*self.base_quat[i])
+                base_transform = gymapi.Transform(p=base_pos, 
+                                                  r=base_quat)
+                
+                nose_pos = base_transform.transform_point(gymapi.Vec3(1,0,0))
+                nose_pose = gymapi.Transform(nose_pos, r=base_quat)
+
+                nose_pos_from_self = self.nose_pos[i].cpu().numpy()
+                nose_pos_from_self = gymapi.Vec3(*nose_pos_from_self)
+                nose_pose_from_self = gymapi.Transform(p = nose_pos_from_self,
+                                                       r = base_quat)
+                gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[i], nose_pose_from_self)
+                gymutil.draw_lines(axes_geom, self.gym, self.viewer, self.envs[i], nose_pose)
+
+        if DRAW_CAMERA_AXES:
+            
+            axes_geom = gymutil.AxesGeometry(scale=1.0)
+            for i in range(self.num_envs):
+                base_pos = (self.root_states[i,:3]).cpu().numpy()
+                base_pos = gymapi.Vec3(*base_pos)
+                base_quat = gymapi.Quat(*self.base_quat[i])
+                # base_quat = gymapi.Quat(self.base_quat[i][0],
+                #                         self.base_quat[i][1],
+                #                         self.base_quat[i][2],
+                #                         self.base_quat[i][3])
+                base_transform = gymapi.Transform(p=base_pos, 
+                                                  r=base_quat)
+                
+                nose_pos = base_transform.transform_point(gymapi.Vec3(0.6,0,0))
+                nose_pose = gymapi.Transform(nose_pos, r=base_quat)
+                gymutil.draw_lines(axes_geom, self.gym, self.viewer, self.envs[i], nose_pose)
+
+        # sphere_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1,1,0))
+        # sphere_pose = gymapi.Transform(gymapi.Vec3(0,0,2), r=None)
+        # gymutil.draw_lines(sphere_geom, self.gym, self.viewer, None,  sphere_pose)
+        
 
     def _init_height_points(self):
         """ Returns points at which the height measurments are sampled (in base frame)
@@ -975,105 +1020,80 @@ class VisualLeggedRobot(BaseTask):
 
     #------------ reward functions----------------
 
-    # def _reward_lin_vel_z(self):
-    #     # Penalize z axis base linear velocity
-    #     return torch.square(self.base_lin_vel[:, 2])
-    
-    # def _reward_ang_vel_xy(self):
-    #     # Penalize xy axes base angular velocity
-    #     return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
-    
-    # def _reward_orientation(self):
-    #     # Penalize non flat base orientation
-    #     return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
-
-    # def _reward_base_height(self):
-    #     # Penalize base height away from target
-    #     base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
-    #     return torch.square(base_height - self.cfg.rewards.base_height_target)
-    
-    # def _reward_torques(self):
-    #     # Penalize torques
-    #     return torch.sum(torch.square(self.torques), dim=1)
-
-    # def _reward_dof_vel(self):
-    #     # Penalize dof velocities
-    #     return torch.sum(torch.square(self.dof_vel), dim=1)
-    
-    # def _reward_dof_acc(self):
-    #     # Penalize dof accelerations
-    #     return torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1)
-    
-    # def _reward_action_rate(self):
-    #     # Penalize changes in actions
-    #     return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
-    
-    # def _reward_collision(self):
-    #     # Penalize collisions on selected bodies
-    #     return torch.sum(1.*(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1), dim=1)
-    
     # def _reward_termination(self):
     #     # Terminal reward / penalty
     #     return self.reset_buf * ~self.time_out_buf
     
-    # def _reward_dof_pos_limits(self):
-    #     # Penalize dof positions too close to the limit
-    #     out_of_limits = -(self.dof_pos - self.dof_pos_limits[:, 0]).clip(max=0.) # lower limit
-    #     out_of_limits += (self.dof_pos - self.dof_pos_limits[:, 1]).clip(min=0.)
-    #     return torch.sum(out_of_limits, dim=1)
-
-    # def _reward_dof_vel_limits(self):
-    #     # Penalize dof velocities too close to the limit
-    #     # clip to max error = 1 rad/s per joint to avoid huge penalties
-    #     return torch.sum((torch.abs(self.dof_vel) - self.dof_vel_limits*self.cfg.rewards.soft_dof_vel_limit).clip(min=0., max=1.), dim=1)
-
-    # def _reward_torque_limits(self):
-    #     # penalize torques too close to the limit
-    #     return torch.sum((torch.abs(self.torques) - self.torque_limits*self.cfg.rewards.soft_torque_limit).clip(min=0.), dim=1)
-
-    # def _reward_tracking_lin_vel(self):
-    #     # Tracking of linear velocity commands (xy axes)
-    #     lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
-    #     return torch.exp(-lin_vel_error/self.cfg.rewards.tracking_sigma)
+    def _reward_distance(self):
+        # Reward according to the distance to the target
+        return 1 / (1.0 + self.target_dist)
     
-    # def _reward_tracking_ang_vel(self):
-    #     # Tracking of angular velocity commands (yaw) 
-    #     ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-    #     return torch.exp(-ang_vel_error/self.cfg.rewards.tracking_sigma)
+    def _reward_blue(self):
+        # Reward according to the distance to the target
+        # return 10000 / (1.0 + self.target_dist * self.target_dist)
 
-    # def _reward_feet_air_time(self):
-    #     # Reward long steps
-    #     # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
-    #     contact = self.contact_forces[:, self.feet_indices, 2] > 1.
-    #     contact_filt = torch.logical_or(contact, self.last_contacts) 
-    #     self.last_contacts = contact
-    #     first_contact = (self.feet_air_time > 0.) * contact_filt
-    #     self.feet_air_time += self.dt
-    #     rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) # reward only on first contact with the ground
-    #     rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
-    #     self.feet_air_time *= ~contact_filt
-    #     return rew_airTime
+        saturation = rgb_to_hsv(self.camera_buffers)[:,1,:,:]
+        min_saturation = 0.4
+        one = torch.tensor([1.], device=self.device)
+        zero = torch.tensor([0.] , device=self.device)
+        blues = torch.where(saturation > min_saturation, one, zero)
     
-    # def _reward_stumble(self):
-    #     # Penalize feet hitting vertical surfaces
-    #     return torch.any(torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) >\
-    #          5 *torch.abs(self.contact_forces[:, self.feet_indices, 2]), dim=1)
+        sum = torch.mean(blues, dim=[1,2])
+
+        # if DEBUG:
+        #     if blues.unique().shape[0] > 1:
+        #         print (self.img_idx)
+
+        return sum
+    
+    
+    
+def rgb_to_hsv(image: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    r"""Convert an image from RGB to HSV.
+    
+    .. image:: _static/img/rgb_to_hsv.png
+    
+    The image data is assumed to be in the range of (0, 1).
+
+    Args:
+        image: RGB Image to be converted to HSV with shape of :math:`(*, 3, H, W)`.
+        eps: scalar to enforce numarical stability.
+
+    Returns:
+        HSV version of the image with shape of :math:`(*, 3, H, W)`.
+        The H channel values are in the range 0..2pi. S and V are in the range 0..1.
+
+    .. note::
+       See a working example `here <https://kornia-tutorials.readthedocs.io/en/latest/
+       color_conversions.html>`__.
+    
+    Example:
+        >>> input = torch.rand(2, 3, 4, 5)
+        >>> output = rgb_to_hsv(input)  # 2x3x4x5
+    """
+    if not isinstance(image, torch.Tensor):
+        raise TypeError(f"Input type is not a torch.Tensor. Got {type(image)}")
+
+    if len(image.shape) < 3 or image.shape[-3] != 3:
+        raise ValueError(f"Input size must have a shape of (*, 3, H, W). Got {image.shape}")
+
+    max_rgb, argmax_rgb = image.max(-3)
+    min_rgb, argmin_rgb = image.min(-3)
+    deltac = max_rgb - min_rgb
+    
+    v = max_rgb
+    s = deltac / (max_rgb + eps)
         
-    # def _reward_stand_still(self):
-    #     # Penalize motion at zero commands
-    #     return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < 0.1)
+    deltac = torch.where(deltac == 0, torch.ones_like(deltac), deltac)
+    rc, gc, bc = torch.unbind((max_rgb.unsqueeze(-3) - image), dim=-3)
 
-    # def _reward_feet_contact_forces(self):
-    #     # penalize high contact forces
-    #     return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  self.cfg.rewards.max_contact_force).clip(min=0.), dim=1)
+    h1 = (bc - gc)
+    h2 = (rc - bc) + 2.0 * deltac
+    h3 = (gc - rc) + 4.0 * deltac
     
-    def _reward_positive_balls(self):
-        # reward positive balls in close distance
+    h = torch.stack((h1, h2, h3), dim=-3) / deltac.unsqueeze(-3)
+    h = torch.gather(h, dim=-3, index=argmax_rgb.unsqueeze(-3)).squeeze(-3)
+    h = (h / 6.0) % 1.0
+    h = 2. * math.pi * h  # we return 0/2pi output
 
-        # return torch.sum(torch.where(self.positive_dist <= 0.3, 3., 0.))
-        return torch.where(self.positive_dist <= 0.3, 3., 0.)
-
-    def _reward_negative_balls(self):
-        # penalize negative balls in close distance
-        # return torch.sum(torch.where(self.negative_dist <= 0.3, 3., 0.))
-        return torch.where(self.negative_dist <= 0.3, 3., 0.)
+    return torch.stack((h, s, v), dim=-3)
