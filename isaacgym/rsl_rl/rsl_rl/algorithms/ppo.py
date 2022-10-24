@@ -121,6 +121,7 @@ class PPO:
         mean_value_loss = 0
         mean_surrogate_loss = 0
         mean_total_loss = 0
+        mean_entropy_loss = 0
         if self.actor_critic.is_recurrent:
             generator = self.storage.reccurent_mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
         else:
@@ -169,6 +170,7 @@ class PPO:
                 else:
                     value_loss = (returns_batch - value_batch).pow(2).mean()
 
+                entropy = entropy_batch.mean()
                 # loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
                 loss = surrogate_loss + self.value_loss_coef * value_loss - (self.entropy_coef * entropy_batch.mean())#.clamp(0.0, 0.18)
                 # print('Clamped ppo')
@@ -180,13 +182,15 @@ class PPO:
                 self.optimizer.step()
 
                 mean_value_loss += value_loss.item()
+                mean_entropy_loss += entropy
                 mean_surrogate_loss += surrogate_loss.item()
                 mean_total_loss += loss.item()
 
         num_updates = self.num_learning_epochs * self.num_mini_batches
         mean_value_loss /= num_updates
+        mean_entropy_loss /= num_updates
         mean_surrogate_loss /= num_updates
         mean_total_loss /= num_updates
         self.storage.clear()
 
-        return mean_value_loss, mean_surrogate_loss, mean_total_loss
+        return mean_value_loss, mean_surrogate_loss, mean_total_loss, mean_entropy_loss
